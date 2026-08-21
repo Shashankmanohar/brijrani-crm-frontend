@@ -36,7 +36,7 @@ interface ErpContextType {
   currentUser: { name: string; email: string } | null;
   login: (email: string, password: string) => Promise<boolean>;
   logout: () => void;
-  clearAllData: () => void;
+  clearAllData: () => Promise<void>;
 }
 
 const ErpContext = createContext<ErpContextType | undefined>(undefined);
@@ -80,6 +80,43 @@ export const ErpProvider = ({ children }: { children: ReactNode }) => {
     }
   }, []);
 
+  // On every page load: check if admin cleared the DB since our last sync.
+  // If yes, wipe this browser's localStorage too — works for ALL users.
+  useEffect(() => {
+    const checkDbCleared = async () => {
+      try {
+        const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api/v1';
+        const res = await fetch(`${baseUrl}/masters/db-status`);
+        if (!res.ok) return;
+        const { clearedAt } = await res.json();
+        if (!clearedAt) return;
+
+        const serverClearedAt = new Date(clearedAt).getTime();
+        const localClearedAt = Number(localStorage.getItem('brijrani_last_cleared_at') || '0');
+
+        if (serverClearedAt > localClearedAt) {
+          // DB was cleared on server after our last sync — wipe local cache
+          const emptyDb = {
+            farmers: [], suppliers: [], customers: [], commodities: [],
+            warehouses: [], bins: [], vehicles: [], drivers: [],
+            purchaseEnquiries: [], purchaseQuotations: [], purchaseOrders: [],
+            purchaseInvoices: [], grns: [], qualityInspections: [], stockItems: [],
+            salesEnquiries: [], salesQuotations: [], salesOrders: [],
+            pickingSlips: [], packingSlips: [], deliveryChallans: [],
+            salesInvoices: [], ewayBills: [], pods: [], stockTransfers: [],
+            vouchers: [], expenses: []
+          };
+          localStorage.setItem('brijrani_erp_database_v4', JSON.stringify(emptyDb));
+          localStorage.setItem('brijrani_last_cleared_at', serverClearedAt.toString());
+          setDb(emptyDb);
+        }
+      } catch {
+        // Silently ignore — offline or backend unavailable
+      }
+    };
+    checkDbCleared();
+  }, []);
+
   const login = async (email: string, password: string): Promise<boolean> => {
     try {
       const response = await api.post('/auth/login', { email, password });
@@ -116,8 +153,13 @@ export const ErpProvider = ({ children }: { children: ReactNode }) => {
     showToast('Logged out successfully', 'info');
   };
 
-  const clearAllData = () => {
+  const clearAllData = async () => {
     if (typeof window !== 'undefined') {
+      try {
+        await api.post('/masters/clear-database');
+      } catch (err) {
+        console.error('Failed to clear backend database:', err);
+      }
       const emptyDb = {
         farmers: [],
         suppliers: [],
@@ -130,6 +172,7 @@ export const ErpProvider = ({ children }: { children: ReactNode }) => {
         purchaseEnquiries: [],
         purchaseQuotations: [],
         purchaseOrders: [],
+        purchaseInvoices: [],
         grns: [],
         qualityInspections: [],
         stockItems: [],
@@ -146,7 +189,8 @@ export const ErpProvider = ({ children }: { children: ReactNode }) => {
         vouchers: [],
         expenses: []
       };
-      localStorage.setItem('brijrani_erp_database_v2', JSON.stringify(emptyDb));
+      localStorage.setItem('brijrani_erp_database_v4', JSON.stringify(emptyDb));
+      localStorage.setItem('brijrani_last_cleared_at', Date.now().toString());
       setDb(emptyDb);
       showToast('All CRM and ERP data has been cleared.', 'success');
     }
@@ -179,8 +223,10 @@ export const ErpProvider = ({ children }: { children: ReactNode }) => {
       try {
         const fields = ['customers', 'suppliers', 'farmers', 'commodities', 'warehouses', 'bins', 'vehicles', 'drivers'];
         const currentDb = getDb();
-        
-        await Promise.all(fields.map(async (field) => {
+        const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+        // Fetch master fields sequentially to avoid burst 429 rate limiting
+        for (const field of fields) {
           try {
             const res = await api.get(`/masters/${field}`);
             const backendList = res.data?.data || [];
@@ -212,15 +258,15 @@ export const ErpProvider = ({ children }: { children: ReactNode }) => {
           } catch (e) {
             console.error(`Failed to fetch ${field} from backend:`, e);
           }
-        }));
+          await sleep(50); // small delay between requests to avoid rate limiting
+        }
 
         // Fetch Sales Invoices from Backend Mongoose
         let liveInvoicesCount = 0;
         try {
           const resInvoices = await api.get('/sales/invoices');
           const backendInvoices = resInvoices.data?.data || [];
-          if (backendInvoices.length > 0) {
-            currentDb.salesInvoices = backendInvoices.map((item: any) => ({
+          currentDb.salesInvoices = backendInvoices.map((item: any) => ({
               id: item._id,
               invoiceNo: item.invoiceNo,
               invoiceDate: item.invoiceDate ? item.invoiceDate.split('T')[0] : new Date().toISOString().split('T')[0],
@@ -247,8 +293,7 @@ export const ErpProvider = ({ children }: { children: ReactNode }) => {
               freight: item.freight || 0,
               grandTotal: item.grandTotal || 0
             }));
-            liveInvoicesCount = backendInvoices.length;
-          }
+          liveInvoicesCount = backendInvoices.length;
         } catch (e) {
           console.error('Failed to fetch sales invoices from backend:', e);
         }
@@ -258,8 +303,7 @@ export const ErpProvider = ({ children }: { children: ReactNode }) => {
         try {
           const resVouchers = await api.get('/finance/vouchers');
           const backendVouchers = resVouchers.data?.data || [];
-          if (backendVouchers.length > 0) {
-            currentDb.vouchers = backendVouchers.map((item: any) => ({
+          currentDb.vouchers = backendVouchers.map((item: any) => ({
               id: item._id,
               voucherNo: item.voucherNumber,
               voucherType: item.voucherType,
@@ -278,8 +322,7 @@ export const ErpProvider = ({ children }: { children: ReactNode }) => {
             }));
 
             const backendExpenses = backendVouchers.filter((item: any) => item.voucherType === 'Expense' || item.voucherType === 'Payment');
-            if (backendExpenses.length > 0) {
-              currentDb.expenses = backendExpenses.map((item: any) => {
+            currentDb.expenses = backendExpenses.map((item: any) => {
                 const narrationLower = (item.narration || '').toLowerCase();
                 let category = 'Other';
                 if (narrationLower.includes('wage') || narrationLower.includes('labor') || narrationLower.includes('salary')) {
@@ -304,13 +347,246 @@ export const ErpProvider = ({ children }: { children: ReactNode }) => {
                   date: item.date ? item.date.split('T')[0] : new Date().toISOString().split('T')[0],
                   referenceNo: item.reference || '',
                   narration: item.narration || ''
-                };
-              });
-              liveExpensesCount = backendExpenses.length;
-            }
-          }
+              };
+            });
+          liveExpensesCount = backendExpenses.length;
         } catch (e) {
           console.error('Failed to fetch vouchers/expenses from backend:', e);
+        }
+
+        // Fetch Procurement Enquiries from backend
+        try {
+          const res = await api.get('/procurement/enquiries');
+          const list = res.data?.data || [];
+          currentDb.purchaseEnquiries = list.map((item: any) => ({
+              id: item._id,
+              enquiryNo: item.enquiryNo,
+              date: item.date ? item.date.split('T')[0] : '',
+              requiredByDate: item.requiredByDate ? item.requiredByDate.split('T')[0] : '',
+              department: item.department,
+              requestedBy: item.requestedBy,
+              priority: item.priority,
+              warehouseId: item.warehouseId,
+              purpose: item.purpose || '',
+              status: item.status || 'Draft',
+              items: (item.items || []).map((i: any) => ({
+                item: i.item,
+                description: i.description || 'Commodity',
+                sku: i.sku || 'SKU',
+                quantity: i.quantity || 0,
+                unit: i.unit || 'MT',
+                estimatedRate: i.estimatedRate || 0,
+                estimatedAmount: i.estimatedAmount || 0,
+                requiredDate: i.requiredDate ? i.requiredDate.split('T')[0] : '',
+                remarks: i.remarks || ''
+              }))
+            }));
+        } catch (e) {
+          console.error('Failed to fetch purchase enquiries:', e);
+        }
+
+        // Fetch Procurement Quotations from backend
+        try {
+          const res = await api.get('/procurement/quotations');
+          const list = res.data?.data || [];
+          currentDb.purchaseQuotations = list.map((item: any) => ({
+              id: item._id,
+              quotationNo: item.quotationNo,
+              enquiryNo: item.enquiryNo || '',
+              date: item.date ? item.date.split('T')[0] : '',
+              partyType: item.partyType,
+              partyId: item.partyId,
+              validUntil: item.validUntil ? item.validUntil.split('T')[0] : '',
+              paymentTerms: item.paymentTerms || '30 Days',
+              deliveryDays: item.deliveryDays || 5,
+              freight: item.freight || 0,
+              discount: item.discount || 0,
+              tax: item.tax || 0,
+              grandTotal: item.grandTotal || 0,
+              remarks: item.remarks || '',
+              status: item.status || 'Draft',
+              items: (item.items || []).map((i: any) => ({
+                item: i.item,
+                description: i.description || '',
+                sku: i.sku || '',
+                quantity: i.quantity || 0,
+                unit: i.unit || 'MT',
+                rate: i.rate || 0,
+                discount: i.discount || 0,
+                taxPercent: i.taxPercent || 0,
+                taxAmount: i.taxAmount || 0,
+                lineTotal: i.lineTotal || 0,
+                deliveryDate: i.deliveryDate ? i.deliveryDate.split('T')[0] : ''
+              }))
+            }));
+        } catch (e) {
+          console.error('Failed to fetch purchase quotations:', e);
+        }
+
+        // Fetch Procurement POs from backend
+        try {
+          const res = await api.get('/procurement/orders');
+          const list = res.data?.data || [];
+          currentDb.purchaseOrders = list.map((item: any) => ({
+              id: item._id,
+              poNo: item.poNo,
+              enquiryNo: item.enquiryNo || '',
+              quotationNo: item.quotationNo || '',
+              date: item.date ? item.date.split('T')[0] : '',
+              partyType: item.partyType || 'supplier',
+              partyId: item.partyId,
+              warehouseId: item.warehouseId,
+              paymentTerms: item.paymentTerms || '30 Days',
+              deliveryTerms: item.deliveryTerms || 'Door Delivery',
+              freight: item.freight || 0,
+              discount: item.discount || 0,
+              tax: item.tax || 0,
+              total: item.total || 0,
+              status: item.status || 'Draft',
+              notes: item.notes || '',
+              items: (item.items || []).map((i: any) => ({
+                item: i.item,
+                description: i.description || 'Commodity',
+                sku: i.sku || '',
+                quantity: i.quantity || 0,
+                unit: i.unit || 'MT',
+                rate: i.rate || 0,
+                discount: i.discount || 0,
+                taxPercent: i.taxPercent || 0,
+                taxAmount: i.taxAmount || 0,
+                amount: i.amount || 0,
+                expectedDelivery: i.expectedDelivery ? i.expectedDelivery.split('T')[0] : ''
+              })),
+              approvalHistory: (item.approvalHistory || []).map((h: any) => ({
+                step: h.step,
+                user: h.user,
+                action: h.action,
+                date: h.date ? h.date.split('T')[0] : '',
+                comment: h.comment || ''
+              })),
+              // Backward compatibility
+              commodityId: item.commodityId,
+              quantity: item.quantity,
+              rate: item.rate || 0,
+              transportCost: item.freight || 0,
+              gstPercent: 5
+            }));
+        } catch (e) {
+          console.error('Failed to fetch purchase orders:', e);
+        }
+
+        // Fetch Procurement GRNs from backend
+        try {
+          const res = await api.get('/procurement/grns');
+          const list = res.data?.data || [];
+          currentDb.grns = list.map((item: any) => ({
+              id: item._id,
+              grnNo: item.grnNo,
+              poId: item.poId,
+              poNo: item.poNo,
+              date: item.date ? item.date.split('T')[0] : '',
+              partyType: item.partyType || 'supplier',
+              partyId: item.partyId,
+              vehicleNo: item.vehicleNo || '',
+              driverName: item.driverName || '',
+              arrivalDate: item.arrivalDate ? item.arrivalDate.split('T')[0] : (item.gateDate ? item.gateDate.split('T')[0] : ''),
+              warehouseId: item.warehouseId,
+              challanNo: item.challanNo || '',
+              challanDate: item.challanDate ? item.challanDate.split('T')[0] : '',
+              transporter: item.transporter || '',
+              remarks: item.remarks || '',
+              qualityStatus: item.qualityStatus || 'Pending',
+              inwardStatus: item.inwardStatus || 'Pending',
+              status: item.status || 'Draft',
+              // Backward compatibility
+              commodityId: item.commodityId,
+              orderedQty: item.acceptedQty || 0,
+              receivedQty: item.acceptedQty || 0,
+              items: (item.items || []).map((i: any) => ({
+                item: i.item,
+                orderedQty: i.orderedQty || 0,
+                previouslyReceived: i.previouslyReceived || 0,
+                receivedNow: i.receivedNow || 0,
+                totalReceived: i.totalReceived || 0,
+                pendingQuantity: i.pendingQuantity || 0,
+                acceptedQuantity: i.acceptedQuantity || 0,
+                rejectedQuantity: i.rejectedQuantity || 0,
+                damagedQuantity: i.damagedQuantity || 0,
+                unit: i.unit || 'MT',
+                batchNo: i.batchNo || '',
+                remarks: i.remarks || ''
+              }))
+            }));
+        } catch (e) {
+          console.error('Failed to fetch GRNs:', e);
+        }
+
+        // Fetch Procurement Invoices from backend
+        try {
+          const res = await api.get('/procurement/invoices');
+          const list = res.data?.data || [];
+          currentDb.purchaseInvoices = list.map((item: any) => ({
+              id: item._id,
+              invoiceNo: item.invoiceNo,
+              invoiceDate: item.invoiceDate ? item.invoiceDate.split('T')[0] : '',
+              dueDate: item.dueDate ? item.dueDate.split('T')[0] : '',
+              partyType: item.partyType || 'supplier',
+              supplierId: item.supplierId,
+              supplierGSTIN: item.supplierGSTIN || '',
+              poNumber: item.poNumber || '',
+              grnNumber: item.grnNumber || '',
+              subtotal: item.subtotal || 0,
+              freight: item.freight || 0,
+              cgst: item.cgst || 0,
+              sgst: item.sgst || 0,
+              igst: item.igst || 0,
+              grandTotal: item.grandTotal || 0,
+              status: item.status || 'Draft',
+              amountPaid: item.amountPaid || 0,
+              remainingAmount: item.remainingAmount !== undefined ? item.remainingAmount : item.grandTotal,
+              paymentHistory: item.paymentHistory || [],
+              items: (item.items || []).map((i: any) => ({
+                item: i.item,
+                poQty: i.poQty || 0,
+                receivedQty: i.receivedQty || 0,
+                invoiceQty: i.invoiceQty || 0,
+                rate: i.rate || 0,
+                amount: i.amount || 0
+              }))
+            }));
+        } catch (e) {
+          console.error('Failed to fetch purchase invoices:', e);
+        }
+
+        // Fetch Procurement Quality Inspections from backend
+        try {
+          const resQis = await api.get('/procurement/quality-inspections');
+          const qis = resQis.data?.data || [];
+          currentDb.qualityInspections = qis.map((item: any) => ({
+              id: item._id,
+              grnId: item.grnId,
+              grnNo: item.grnNo,
+              inspector: item.inspector || 'System',
+              date: item.date ? item.date.split('T')[0] : '',
+              status: item.status || 'Passed',
+              notes: item.notes || '',
+              qualityScore: item.qualityScore || 90,
+              items: (item.items || []).map((i: any) => ({
+                item: i.item,
+                quantity: i.quantity || 0,
+                moisturePercent: i.moisturePercent || 0,
+                grade: i.grade || 'A',
+                color: i.color || 'Yellow',
+                foreignMaterialPercent: i.foreignMaterialPercent || 0,
+                damagePercent: i.damagePercent || 0,
+                purityPercent: i.purityPercent || 100,
+                qualityScore: i.qualityScore || 90,
+                status: i.status || 'Passed',
+                remarks: i.remarks || ''
+              }))
+            }));
+        } catch (e) {
+          console.error('Failed to fetch quality inspections:', e);
         }
 
         // Seed demo transactions dynamically if empty (keeps the Profit & Loss statement looking full and premium on startup)
@@ -473,6 +749,68 @@ export const ErpProvider = ({ children }: { children: ReactNode }) => {
           }
         }
 
+        // Seed default stock items if empty or has stale quantities (gives warehouses initial occupancy to show animations)
+        const hasStaleQuantity = currentDb.stockItems.some((s: any) => s.quantity === 350);
+        if ((currentDb.stockItems.length === 0 || hasStaleQuantity) && currentDb.warehouses.length > 0 && currentDb.bins.length > 0 && currentDb.commodities.length > 0) {
+          const w1 = currentDb.warehouses[0];
+          const w2 = currentDb.warehouses[1];
+          const comm1 = currentDb.commodities.find((c: any) => c.sku === 'CMD-001' || c.name.toLowerCase().includes('wheat')) || currentDb.commodities[0];
+          const comm2 = currentDb.commodities.find((c: any) => c.sku === 'CMD-002' || c.name.toLowerCase().includes('paddy')) || currentDb.commodities[1];
+          const comm3 = currentDb.commodities.find((c: any) => c.sku === 'CMD-003' || c.name.toLowerCase().includes('mustard')) || currentDb.commodities[2];
+
+          // Bins in Patna Silo and Bihta Silo
+          const w1Bins = currentDb.bins.filter((b: any) => b.warehouseId === w1.id || b.id.startsWith(w1.id.replace('WH-', 'WH0')));
+          const w2Bins = currentDb.bins.filter((b: any) => b.warehouseId === w2.id || b.id.startsWith(w2.id.replace('WH-', 'WH0')));
+
+          const defaultStock = [];
+          if (comm1 && w1 && w1Bins[0]) {
+            defaultStock.push({
+              id: 'stock-1',
+              commodityId: comm1.id,
+              batchNo: 'BAT-2026-W01',
+              warehouseId: w1.id,
+              binId: w1Bins[0].id,
+              quantity: 120, // fits perfectly inside 200 MT capacity
+              unit: 'MT' as const,
+              purchaseCost: comm1.purchaseCost || 18000,
+              averageCost: comm1.purchaseCost || 18000,
+              entryDate: '2026-08-15'
+            });
+          }
+          if (comm2 && w1 && w1Bins[1]) {
+            defaultStock.push({
+              id: 'stock-2',
+              commodityId: comm2.id,
+              batchNo: 'BAT-2026-P01',
+              warehouseId: w1.id,
+              binId: w1Bins[1].id,
+              quantity: 180, // fits perfectly inside 300 MT capacity
+              unit: 'MT' as const,
+              purchaseCost: comm2.purchaseCost || 19500,
+              averageCost: comm2.purchaseCost || 19500,
+              entryDate: '2026-08-16'
+            });
+          }
+          if (comm3 && w2 && w2Bins[0]) {
+            defaultStock.push({
+              id: 'stock-3',
+              commodityId: comm3.id,
+              batchNo: 'BAT-2026-M01',
+              warehouseId: w2.id,
+              binId: w2Bins[0].id,
+              quantity: 150,
+              unit: 'MT' as const,
+              purchaseCost: comm3.purchaseCost || 22000,
+              averageCost: comm3.purchaseCost || 22000,
+              entryDate: '2026-08-18'
+            });
+          }
+
+          if (defaultStock.length > 0) {
+            currentDb.stockItems = defaultStock;
+          }
+        }
+
         saveDb(currentDb);
         refreshDb();
       } catch (err) {
@@ -487,7 +825,7 @@ export const ErpProvider = ({ children }: { children: ReactNode }) => {
     };
     window.addEventListener('erp-db-sync', handleSync);
     return () => window.removeEventListener('erp-db-sync', handleSync);
-  }, []);
+  }, [isLoggedIn]);
 
   const setCompany = (comp: string) => {
     setCompanyState(comp);

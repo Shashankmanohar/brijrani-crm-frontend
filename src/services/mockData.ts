@@ -2,7 +2,7 @@ import {
   Farmer, Supplier, Customer, Commodity, Warehouse, Bin, Vehicle, Driver,
   PurchaseOrder, GRN, QualityInspection, StockItem, SalesOrder, SalesInvoice,
   Voucher, Expense, SalesQuotation, PurchaseQuotation, SalesEnquiry, PurchaseEnquiry,
-  PickingSlip, PackingSlip, DeliveryChallan, EWayBill, POD, StockTransfer
+  PickingSlip, PackingSlip, DeliveryChallan, EWayBill, POD, StockTransfer, PurchaseInvoice
 } from '../types/erp';
 
 export const INITIAL_FARMERS: Farmer[] = [];
@@ -31,3 +31,4 @@ export const INITIAL_DELIVERY_CHALLANS: DeliveryChallan[] = [];
 export const INITIAL_EWAY_BILLS: EWayBill[] = [];
 export const INITIAL_PODS: POD[] = [];
 export const INITIAL_STOCK_TRANSFERS: StockTransfer[] = [];
+export const INITIAL_PURCHASE_INVOICES: PurchaseInvoice[] = [];

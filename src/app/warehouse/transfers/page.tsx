@@ -30,18 +30,13 @@ export default function StockTransfersPage() {
 
   const handleCreateTransfer = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!commodityId || !batchNo || !fromWarehouseId || !fromBinId || !toWarehouseId || !toBinId) {
+    if (!commodityId || !batchNo || !fromWarehouseId || !toWarehouseId) {
       showToast('Please fill all mandatory fields', 'error');
       return;
     }
 
-    if (fromBinId === toBinId) {
-      showToast('Source and Destination bins cannot be identical', 'error');
-      return;
-    }
-
     // Verify stock availability
-    const stock = stockItems.find(s => s.warehouseId === fromWarehouseId && s.binId === fromBinId && s.batchNo === batchNo);
+    const stock = stockItems.find(s => s.warehouseId === fromWarehouseId && s.batchNo === batchNo);
     if (!stock || stock.quantity < quantity) {
       showToast(`Warning: Insufficient stock in source bin. Available: ${stock?.quantity || 0} MT`, 'error');
       return;
@@ -51,9 +46,9 @@ export default function StockTransfersPage() {
       commodityId,
       batchNo,
       fromWarehouseId,
-      fromBinId,
+      fromBinId: 'N/A',
       toWarehouseId,
-      toBinId,
+      toBinId: 'N/A',
       quantity,
       transferDate: new Date().toISOString().split('T')[0],
       reason
@@ -74,12 +69,12 @@ export default function StockTransfersPage() {
     { header: 'Batch Code', accessor: 'batchNo' as keyof StockTransfer },
     { header: 'Qty', accessor: (row: StockTransfer) => `${row.quantity} MT` },
     { 
-      header: 'From Bin', 
-      accessor: (row: StockTransfer) => bins.find(b => b.id === row.fromBinId)?.name || row.fromBinId 
+      header: 'From Warehouse', 
+      accessor: (row: StockTransfer) => warehouses.find(w => w.id === row.fromWarehouseId)?.name || row.fromWarehouseId 
     },
     { 
-      header: 'To Bin', 
-      accessor: (row: StockTransfer) => bins.find(b => b.id === row.toBinId)?.name || row.toBinId 
+      header: 'To Warehouse', 
+      accessor: (row: StockTransfer) => warehouses.find(w => w.id === row.toWarehouseId)?.name || row.toWarehouseId 
     },
     { 
       header: 'Status', 
@@ -138,14 +133,14 @@ export default function StockTransfersPage() {
                   <div className="text-center flex-1">
                     <span className="text-[9px] text-slate-400 font-bold block uppercase">Source</span>
                     <span className="font-bold text-slate-800 block text-[10px]">
-                      {bins.find(b => b.id === selectedTransfer.fromBinId)?.name.split(' - ')[2]}
+                      {warehouses.find(w => w.id === selectedTransfer.fromWarehouseId)?.name}
                     </span>
                   </div>
                   <ArrowRightLeft size={16} className="text-slate-400 mx-2" />
                   <div className="text-center flex-1">
                     <span className="text-[9px] text-slate-400 font-bold block uppercase">Destination</span>
                     <span className="font-bold text-slate-800 block text-[10px]">
-                      {bins.find(b => b.id === selectedTransfer.toBinId)?.name.split(' - ')[2]}
+                      {warehouses.find(w => w.id === selectedTransfer.toWarehouseId)?.name}
                     </span>
                   </div>
                 </div>
@@ -250,35 +245,19 @@ export default function StockTransfersPage() {
                   <p className="font-bold text-slate-700 leading-normal">
                     {warehouses.find(w => w.id === fromWarehouseId)?.name || 'Select Batch First'}
                   </p>
-                  <p className="text-[10px] text-slate-400">
-                    Bin: {bins.find(b => b.id === fromBinId)?.name.split(' - ')[2] || 'Unselected'}
-                  </p>
                 </div>
 
                 {/* Destination Details */}
                 <div>
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Target Warehouse *</label>
                   <select
                     value={toWarehouseId}
                     onChange={e => setToWarehouseId(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs bg-white font-medium text-slate-700 focus:outline-none mb-2"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs bg-white font-medium text-slate-700 focus:outline-none"
                     required
                   >
                     <option value="">Select Warehouse</option>
                     {warehouses.map(w => (
                       <option key={w.id} value={w.id}>{w.name}</option>
-                    ))}
-                  </select>
-
-                  <select
-                    value={toBinId}
-                    onChange={e => setToBinId(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs bg-white font-medium text-slate-700 focus:outline-none"
-                    required
-                  >
-                    <option value="">Select Target Bin</option>
-                    {bins.filter(b => b.id.startsWith(toWarehouseId.replace('WH-', 'WH0'))).map(bin => (
-                      <option key={bin.id} value={bin.id}>{bin.name} ({bin.capacityMT - bin.occupiedMT} MT free)</option>
                     ))}
                   </select>
                 </div>

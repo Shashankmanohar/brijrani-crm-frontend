@@ -2,7 +2,7 @@ import {
   Farmer, Supplier, Customer, Commodity, Warehouse, Bin, Vehicle, Driver,
   PurchaseOrder, GRN, QualityInspection, StockItem, SalesOrder, SalesInvoice,
   Voucher, Expense, SalesQuotation, PurchaseQuotation, SalesEnquiry, PurchaseEnquiry,
-  PickingSlip, PackingSlip, DeliveryChallan, EWayBill, POD, StockTransfer
+  PickingSlip, PackingSlip, DeliveryChallan, EWayBill, POD, StockTransfer, PurchaseInvoice
 } from '../types/erp';
 
 import {
@@ -13,7 +13,7 @@ import {
   INITIAL_VOUCHERS, INITIAL_EXPENSES, INITIAL_ENQUIRIES, INITIAL_PURCHASE_QUOTATIONS,
   INITIAL_SALES_ENQUIRIES, INITIAL_SALES_QUOTATIONS, INITIAL_PICKING_SLIPS,
   INITIAL_PACKING_SLIPS, INITIAL_DELIVERY_CHALLANS, INITIAL_EWAY_BILLS,
-  INITIAL_PODS, INITIAL_STOCK_TRANSFERS
+  INITIAL_PODS, INITIAL_STOCK_TRANSFERS, INITIAL_PURCHASE_INVOICES
 } from './mockData';
 
 interface ErpDatabase {
@@ -43,9 +43,10 @@ interface ErpDatabase {
   stockTransfers: StockTransfer[];
   vouchers: Voucher[];
   expenses: Expense[];
+  purchaseInvoices: PurchaseInvoice[];
 }
 
-const DB_KEY = 'brijrani_erp_database_v3';
+const DB_KEY = 'brijrani_erp_database_v4';
 
 export const recalculateStockTotals = (db: ErpDatabase) => {
   if (!db) return;
@@ -115,7 +116,8 @@ export const getDb = (): ErpDatabase => {
     pods: [],
     stockTransfers: [],
     vouchers: [],
-    expenses: []
+    expenses: [],
+    purchaseInvoices: []
   };
 
   if (typeof window === 'undefined') {
@@ -130,6 +132,12 @@ export const getDb = (): ErpDatabase => {
     return emptyDb;
   }
   const db = JSON.parse(stored);
+  db.purchaseInvoices = db.purchaseInvoices || [];
+  db.purchaseEnquiries = db.purchaseEnquiries || [];
+  db.purchaseQuotations = db.purchaseQuotations || [];
+  db.purchaseOrders = db.purchaseOrders || [];
+  db.grns = db.grns || [];
+  db.qualityInspections = db.qualityInspections || [];
   recalculateStockTotals(db);
   return db;
 };
@@ -146,7 +154,7 @@ import api from './axios';
 export const mapToBackend = (dbField: string, item: any): any => {
   const payload = { ...item };
   if (dbField === 'customers' || dbField === 'suppliers') {
-    payload.companyName = item.name;
+    payload.companyName = item.companyName || item.name;
     payload.billingAddress = item.address || 'N/A';
     payload.shippingAddress = item.address || 'N/A';
   } else if (dbField === 'farmers') {
@@ -221,6 +229,31 @@ const createCrudMethods = <T extends { id: string }>(dbField: keyof ErpDatabase)
             }
           })
           .catch(err => console.error('Failed to sync master creation to backend:', err));
+      } else if (['purchaseEnquiries', 'purchaseQuotations', 'purchaseOrders', 'grns', 'purchaseInvoices'].includes(dbField)) {
+        let endpoint = '';
+        if (dbField === 'purchaseEnquiries') endpoint = '/procurement/enquiries';
+        else if (dbField === 'purchaseQuotations') endpoint = '/procurement/quotations';
+        else if (dbField === 'purchaseOrders') endpoint = '/procurement/orders';
+        else if (dbField === 'grns') endpoint = '/procurement/grns';
+        else if (dbField === 'purchaseInvoices') endpoint = '/procurement/invoices';
+
+        api.post(endpoint, newItem)
+          .then(res => {
+            const backendItem = res.data?.data;
+            if (backendItem && backendItem._id) {
+              const currentDb = getDb();
+              const items = currentDb[dbField] as unknown as T[];
+              const idx = items.findIndex(item => item.id === newItem.id);
+              if (idx !== -1) {
+                items[idx].id = backendItem._id;
+                saveDb(currentDb);
+                if (typeof window !== 'undefined') {
+                  window.dispatchEvent(new CustomEvent('erp-db-sync'));
+                }
+              }
+            }
+          })
+          .catch(err => console.error(`Failed to sync procurement ${dbField} to backend:`, err));
       }
     },
     update: (updatedItem: T): void => {
@@ -230,6 +263,42 @@ const createCrudMethods = <T extends { id: string }>(dbField: keyof ErpDatabase)
       if (idx !== -1) {
         items[idx] = updatedItem;
         saveDb(db);
+
+        // Async Sync with backend
+        if (['customers', 'suppliers', 'farmers', 'commodities', 'warehouses', 'vehicles', 'drivers'].includes(dbField)) {
+          const payload = mapToBackend(dbField, updatedItem);
+          api.put(`/masters/${dbField}/${updatedItem.id}`, payload).catch(err => console.error(err));
+        } else if (dbField === 'purchaseInvoices') {
+          if (updatedItem.id.match(/^[0-9a-fA-F]{24}$/)) {
+            api.patch(`/procurement/invoices/${updatedItem.id}`, updatedItem)
+              .catch(err => console.error('Failed to sync purchaseInvoice update to backend:', err));
+          }
+        } else if (dbField === 'purchaseEnquiries') {
+          if (updatedItem.id.match(/^[0-9a-fA-F]{24}$/)) {
+            api.patch(`/procurement/enquiries/${updatedItem.id}`, updatedItem)
+              .catch(err => console.error('Failed to sync purchaseEnquiry update to backend:', err));
+          }
+        } else if (dbField === 'purchaseOrders') {
+          if (updatedItem.id.match(/^[0-9a-fA-F]{24}$/)) {
+            api.patch(`/procurement/orders/${updatedItem.id}`, updatedItem)
+              .catch(err => console.error('Failed to sync purchaseOrder update to backend:', err));
+          }
+        } else if (dbField === 'purchaseQuotations') {
+          if (updatedItem.id.match(/^[0-9a-fA-F]{24}$/)) {
+            api.patch(`/procurement/quotations/${updatedItem.id}`, updatedItem)
+              .catch(err => console.error('Failed to sync purchaseQuotation update to backend:', err));
+          }
+        } else if (dbField === 'grns') {
+          if (updatedItem.id.match(/^[0-9a-fA-F]{24}$/)) {
+            api.patch(`/procurement/grns/${updatedItem.id}`, updatedItem)
+              .catch(err => console.error('Failed to sync GRN update to backend:', err));
+          }
+        } else if (dbField === 'qualityInspections') {
+          if (updatedItem.id.match(/^[0-9a-fA-F]{24}$/)) {
+            api.patch(`/procurement/quality-inspections/${updatedItem.id}`, updatedItem)
+              .catch(err => console.error('Failed to sync QC update to backend:', err));
+          }
+        }
       }
     },
     delete: (id: string): void => {
@@ -279,6 +348,7 @@ export const erpService = {
   stockTransfers: createCrudMethods<StockTransfer>('stockTransfers'),
   vouchers: createCrudMethods<Voucher>('vouchers'),
   expenses: createCrudMethods<Expense>('expenses'),
+  purchaseInvoices: createCrudMethods<PurchaseInvoice>('purchaseInvoices'),
 
   // Specialized Workflow Actions
 
@@ -288,6 +358,7 @@ export const erpService = {
     const po = db.purchaseOrders.find(p => p.id === poId);
     if (po) {
       po.status = 'Approved';
+      po.approvalHistory = po.approvalHistory || [];
       po.approvalHistory.push({
         step: 'Manager Approval',
         user: approverName,
@@ -296,6 +367,12 @@ export const erpService = {
         comment
       });
       saveDb(db);
+
+      // Sync PO approval to backend
+      if (poId.match(/^[0-9a-fA-F]{24}$/)) {
+        api.patch(`/procurement/orders/${poId}/approve`, { comment })
+          .catch(err => console.error('Failed to sync PO approval to backend:', err));
+      }
     }
   },
 
@@ -305,6 +382,7 @@ export const erpService = {
     const po = db.purchaseOrders.find(p => p.id === poId);
     if (po) {
       po.status = 'Cancelled';
+      po.approvalHistory = po.approvalHistory || [];
       po.approvalHistory.push({
         step: 'Manager Approval',
         user: approverName,
@@ -313,21 +391,42 @@ export const erpService = {
         comment
       });
       saveDb(db);
+
+      // Sync PO rejection to backend by patching status to Cancelled
+      if (poId.match(/^[0-9a-fA-F]{24}$/)) {
+        api.patch(`/procurement/orders/${poId}`, po)
+          .catch(err => console.error('Failed to sync PO rejection to backend:', err));
+      }
     }
   },
 
   // 3. Create GRN & update PO status
-  createGRNFromPO: (grnData: Omit<GRN, 'id' | 'grnNo' | 'qualityStatus' | 'inwardStatus'>): GRN => {
+  createGRNFromPO: (grnData: any): GRN => {
     const db = getDb();
     const grnNo = `GRN/BR/2026-27/${String(db.grns.length + 1).padStart(3, '0')}`;
     const id = `GRN-${Date.now()}`;
     
+    const items = grnData.items || [];
+    const firstItem = items[0];
+    const totalOrderedQty = items.reduce((sum: number, i: any) => sum + i.orderedQty, 0);
+    const totalReceivedQty = items.reduce((sum: number, i: any) => sum + i.receivedNow, 0);
+
     const newGrn: GRN = {
       ...grnData,
       id,
       grnNo,
-      qualityStatus: 'Passed',
-      inwardStatus: 'Pending'
+      qualityStatus: 'Pending',
+      inwardStatus: 'Pending',
+      status: 'Pending QC',
+      items,
+      // Fallback root properties
+      commodityId: grnData.commodityId || firstItem?.item || '',
+      orderedQty: grnData.orderedQty || totalOrderedQty,
+      receivedQty: grnData.receivedQty || totalReceivedQty,
+      acceptedQty: 0,
+      rejectedQty: 0,
+      weight: grnData.weight || totalReceivedQty,
+      batchNo: grnData.batchNo || `BAT-${Date.now().toString().slice(-4)}`
     };
     
     db.grns.push(newGrn);
@@ -335,25 +434,42 @@ export const erpService = {
     // Update PO status
     const po = db.purchaseOrders.find(p => p.id === grnData.poId);
     if (po) {
-      if (newGrn.receivedQty >= po.quantity) {
-        po.status = 'Received';
-      } else {
-        po.status = 'Partially Received';
-      }
+      po.status = 'Partially Received';
     }
 
     saveDb(db);
+
+    // Sync GRN creation to backend
+    api.post('/procurement/grns', newGrn)
+      .then(res => {
+        const backendItem = res.data?.data;
+        if (backendItem && backendItem._id) {
+          const currentDb = getDb();
+          const idx = currentDb.grns.findIndex(g => g.id === newGrn.id);
+          if (idx !== -1) {
+            currentDb.grns[idx].id = backendItem._id;
+            saveDb(currentDb);
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('erp-db-sync'));
+            }
+          }
+        }
+      })
+      .catch(err => console.error('Failed to sync GRN creation to backend:', err));
+
     return newGrn;
   },
 
   // 4. Submit Quality Inspection
-  submitQualityInspection: (qiData: Omit<QualityInspection, 'id' | 'date'>): QualityInspection => {
+  submitQualityInspection: (qiData: any): QualityInspection => {
     const db = getDb();
     const id = `QI-${Date.now()}`;
+    const date = new Date().toISOString().split('T')[0];
+
     const newQi: QualityInspection = {
       ...qiData,
       id,
-      date: new Date().toISOString().split('T')[0]
+      date
     };
 
     db.qualityInspections.push(newQi);
@@ -361,10 +477,55 @@ export const erpService = {
     // Update GRN quality status
     const grn = db.grns.find(g => g.id === qiData.grnId);
     if (grn) {
-      grn.qualityStatus = newQi.status;
+      grn.qualityStatus = qiData.status;
+      grn.status = qiData.status === 'Passed' ? 'Accepted' : qiData.status === 'Rejected' ? 'Rejected' : 'Accepted';
+      
+      // Update item quantities based on inspection results
+      if (qiData.items) {
+        qiData.items.forEach((qiItem: any) => {
+          const grnItem = grn.items.find(i => i.item === qiItem.item);
+          if (grnItem) {
+            grnItem.acceptedQuantity = qiItem.status === 'Rejected' ? 0 : grnItem.receivedNow - (qiItem.rejectedQuantity || 0) - (qiItem.damagedQuantity || 0);
+            grnItem.rejectedQuantity = qiItem.rejectedQuantity || 0;
+            grnItem.damagedQuantity = qiItem.damagedQuantity || 0;
+            grnItem.pendingQuantity = Math.max(0, grnItem.orderedQty - grnItem.previouslyReceived - grnItem.acceptedQuantity);
+            grnItem.totalReceived = grnItem.previouslyReceived + grnItem.acceptedQuantity;
+            grnItem.batchNo = grnItem.batchNo || `BAT-${Date.now().toString().slice(-4)}`;
+          }
+        });
+      }
+
+      // Sync root properties
+      const firstItem = grn.items[0];
+      if (firstItem) {
+        grn.acceptedQty = grn.items.reduce((sum, i) => sum + i.acceptedQuantity, 0);
+        grn.rejectedQty = grn.items.reduce((sum, i) => sum + i.rejectedQuantity, 0);
+        grn.receivedQty = grn.items.reduce((sum, i) => sum + i.receivedNow, 0);
+        grn.commodityId = grn.commodityId || firstItem.item;
+        grn.batchNo = firstItem.batchNo;
+      }
     }
 
     saveDb(db);
+
+    // Sync Quality Inspection creation to backend
+    api.post('/procurement/quality-inspections', newQi)
+      .then(res => {
+        const backendItem = res.data?.data;
+        if (backendItem && backendItem._id) {
+          const currentDb = getDb();
+          const idx = currentDb.qualityInspections.findIndex(q => q.id === newQi.id);
+          if (idx !== -1) {
+            currentDb.qualityInspections[idx].id = backendItem._id;
+            saveDb(currentDb);
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('erp-db-sync'));
+            }
+          }
+        }
+      })
+      .catch(err => console.error('Failed to sync Quality Inspection to backend:', err));
+
     return newQi;
   },
 
@@ -374,66 +535,124 @@ export const erpService = {
     const grn = db.grns.find(g => g.id === grnId);
     if (!grn) return;
 
-    const commodity = db.commodities.find(c => c.id === grn.commodityId);
-    if (!commodity) return;
+    const po = db.purchaseOrders.find(p => p.id === grn.poId);
 
-    // Create Stock Item
-    const stockId = `STK-${Date.now()}`;
-    const purchaseCost = db.purchaseOrders.find(p => p.id === grn.poId)?.rate || commodity.purchaseCost;
-    
-    const newStockItem: StockItem = {
-      id: stockId,
-      commodityId: grn.commodityId,
-      batchNo: grn.batchNo,
-      warehouseId: grn.warehouseId,
-      binId: binId,
-      quantity: grn.acceptedQty,
-      unit: commodity.unit,
-      purchaseCost: purchaseCost,
-      averageCost: purchaseCost,
-      entryDate: new Date().toISOString().split('T')[0]
-    };
+    // Inward each item in GRN
+    grn.items.forEach(grnItem => {
+      if (grnItem.acceptedQuantity <= 0) return;
 
-    db.stockItems.push(newStockItem);
+      const commId = grnItem.item;
+      const commodity = db.commodities.find(c => c.id === commId || c.name === grnItem.item || c.sku === grnItem.item)
+        || db.commodities.find(c => c.id === grn.commodityId);
+      if (!commodity) return;
 
-    // Update Bin occupancy
-    const bin = db.bins.find(b => b.id === binId);
-    if (bin) {
-      bin.occupiedMT = Math.min(bin.capacityMT, bin.occupiedMT + grn.acceptedQty);
-    }
+      const stockId = `STK-${Date.now()}-${Math.random().toString().slice(-4)}`;
+      const poItem = po?.items?.find(i => i.item === grnItem.item);
+      const purchaseCost = poItem?.rate || commodity.purchaseCost;
 
-    // Update Warehouse occupancy
-    const warehouse = db.warehouses.find(w => w.id === grn.warehouseId);
-    if (warehouse) {
-      warehouse.usedCapacityMT = Math.min(warehouse.capacityMT, warehouse.usedCapacityMT + grn.acceptedQty);
-    }
+      const newStockItem: StockItem = {
+        id: stockId,
+        commodityId: commodity.id,
+        batchNo: grnItem.batchNo,
+        warehouseId: grn.warehouseId,
+        binId: binId,
+        quantity: grnItem.acceptedQuantity,
+        unit: grnItem.unit as any,
+        purchaseCost: purchaseCost,
+        averageCost: purchaseCost,
+        entryDate: new Date().toISOString().split('T')[0]
+      };
 
-    // Recalculate Commodity Average Purchase Cost & Quantity
-    const currentStockVal = commodity.stockQty * commodity.purchaseCost;
-    const incomingVal = grn.acceptedQty * purchaseCost;
-    
-    commodity.stockQty += grn.acceptedQty;
-    if (commodity.stockQty > 0) {
-      commodity.purchaseCost = Math.round((currentStockVal + incomingVal) / commodity.stockQty);
-    }
+      db.stockItems.push(newStockItem);
+
+      // Update Bin occupancy
+      const bin = db.bins.find(b => b.id === binId);
+      if (bin) {
+        bin.occupiedMT = Number((bin.occupiedMT + grnItem.acceptedQuantity).toFixed(2));
+      }
+
+      // Update Warehouse occupancy
+      const warehouse = db.warehouses.find(w => w.id === grn.warehouseId);
+      if (warehouse) {
+        warehouse.usedCapacityMT = Number((warehouse.usedCapacityMT + grnItem.acceptedQuantity).toFixed(2));
+      }
+
+      // Recalculate Commodity Average Purchase Cost & Quantity
+      const currentStockVal = commodity.stockQty * commodity.purchaseCost;
+      const incomingVal = grnItem.acceptedQuantity * purchaseCost;
+      
+      commodity.stockQty += grnItem.acceptedQuantity;
+      if (commodity.stockQty > 0) {
+        commodity.purchaseCost = Math.round((currentStockVal + incomingVal) / commodity.stockQty);
+      }
+    });
 
     // Mark GRN as Inwarded
     grn.inwardStatus = 'Completed';
 
-    // Auto-create Purchase Invoice (unpaid, waiting for accounting clearance)
-    const invoiceNo = `PINV/BR/2026-27/${String(db.salesInvoices.length + 1).padStart(3, '0')}`;
-    const invoiceTotal = Math.round(grn.acceptedQty * purchaseCost * 1.05); // including 5% GST
-    
-    // Add to Supplier/Farmer Balance (payables)
-    if (grn.partyType === 'supplier') {
-      const sup = db.suppliers.find(s => s.id === grn.partyId);
-      if (sup) sup.balance += invoiceTotal;
-    } else {
-      const farmer = db.farmers.find(f => f.id === grn.partyId);
-      if (farmer) farmer.balance += invoiceTotal;
+    // Update PO Status
+    if (po) {
+      let allCompleted = true;
+      po.items.forEach(poItem => {
+        const totalAccepted = db.grns
+          .filter(g => g.poId === po.id && g.inwardStatus === 'Completed')
+          .reduce((sum, g) => {
+            const git = g.items.find(gi => gi.item === poItem.item);
+            return sum + (git ? git.acceptedQuantity : 0);
+          }, 0);
+
+        if (totalAccepted < poItem.quantity) {
+          allCompleted = false;
+        }
+      });
+      po.status = allCompleted ? 'Received' : 'Partially Received';
     }
 
     saveDb(db);
+  },
+
+  // 3-Way Match Verification
+  verifyThreeWayMatch: (invoice: PurchaseInvoice): { isMatch: boolean; details: string[] } => {
+    const db = getDb();
+    const po = db.purchaseOrders.find(p => p.poNo === invoice.poNumber);
+    const grn = db.grns.find(g => g.grnNo === invoice.grnNumber);
+    const warnings: string[] = [];
+
+    if (!po) {
+      warnings.push(`Reference PO ${invoice.poNumber} not found.`);
+      return { isMatch: false, details: warnings };
+    }
+    if (!grn) {
+      warnings.push(`Reference GRN ${invoice.grnNumber} not found.`);
+      return { isMatch: false, details: warnings };
+    }
+
+    invoice.items.forEach(invItem => {
+      const poItem = po.items?.find(i => i.item === invItem.item);
+      const grnItem = grn.items?.find(i => i.item === invItem.item);
+
+      if (!poItem) {
+        warnings.push(`Item "${invItem.item}" not found in PO.`);
+        return;
+      }
+      if (!grnItem) {
+        warnings.push(`Item "${invItem.item}" not found in GRN.`);
+        return;
+      }
+
+      if (invItem.invoiceQty > grnItem.acceptedQuantity) {
+        warnings.push(`Item "${invItem.item}": Invoice quantity (${invItem.invoiceQty}) exceeds QC accepted quantity (${grnItem.acceptedQuantity}) by ${invItem.invoiceQty - grnItem.acceptedQuantity} units.`);
+      }
+
+      if (invItem.rate > poItem.rate) {
+        warnings.push(`Item "${invItem.item}": Invoice rate (₹${invItem.rate}) exceeds PO rate (₹${poItem.rate}) by ₹${invItem.rate - poItem.rate}.`);
+      }
+    });
+
+    return {
+      isMatch: warnings.length === 0,
+      details: warnings.length === 0 ? ['All quantities and rates match. Ready for verification.'] : warnings
+    };
   },
 
   // 6. Create Sales Order (Reserves quantity in commodity database)

@@ -27,8 +27,8 @@ export default function ApprovalPanel({
   const { currentUserRole, showToast } = useErp();
   const [comment, setComment] = useState('');
 
-  // RBAC validation: Approver must be Super Admin or Purchase Manager
-  const isAuthorized = currentUserRole === 'Super Admin' || currentUserRole === 'Purchase Manager';
+  // RBAC validation: Approver must be Super Admin
+  const isAuthorized = currentUserRole === 'Super Admin';
   const isPending = status === 'Pending Approval';
 
   const handleApprove = () => {
@@ -80,7 +80,7 @@ export default function ApprovalPanel({
           <div className="space-y-0.5 font-medium">
             <span className="font-bold">High-Value Approval Threshold Raised</span>
             <p className="leading-normal text-[11px] text-amber-600">
-              This document total exceeds ₹10,00,000. It requires manual authorization by a Purchase Manager or Super Admin before stock and invoicing can proceed.
+              This document total exceeds ₹10,00,000. It requires manual authorization by a Super Admin before stock and invoicing can proceed.
             </p>
           </div>
         </div>
@@ -148,7 +148,7 @@ export default function ApprovalPanel({
             </div>
           ) : (
             <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-[11px] text-slate-500 font-medium leading-normal">
-              🔒 Approval controls are locked. You are currently viewed as a <span className="font-bold text-slate-700">{currentUserRole}</span>. Switch your role to <span className="font-bold text-slate-700">Purchase Manager</span> or <span className="font-bold text-slate-700">Super Admin</span> in the top header to authorize this document.
+              🔒 Approval controls are locked. You are currently viewed as a <span className="font-bold text-slate-700">{currentUserRole}</span>. Switch your role to <span className="font-bold text-slate-700">Super Admin</span> in the top header to authorize this document.
             </div>
           )}
         </div>

@@ -8,6 +8,11 @@ export interface Farmer {
   gstin?: string;
   balance: number; // Positive is payable (we owe them)
   status: 'Active' | 'Inactive';
+  pan?: string;
+  aadhar?: string;
+  bankName?: string;
+  bankAccountNo?: string;
+  bankIfsc?: string;
 }
 
 export interface Supplier {
@@ -20,6 +25,11 @@ export interface Supplier {
   gstin: string;
   balance: number; // Positive is payable (we owe them)
   status: 'Active' | 'Inactive';
+  companyName?: string;
+  pan?: string;
+  bankName?: string;
+  accountNumber?: string;
+  ifscCode?: string;
 }
 
 export interface Customer {
@@ -32,6 +42,11 @@ export interface Customer {
   gstin: string;
   balance: number; // Positive is receivable (they owe us)
   status: 'Active' | 'Inactive';
+  companyName?: string;
+  pan?: string;
+  bankName?: string;
+  accountNumber?: string;
+  ifscCode?: string;
 }
 
 export interface Commodity {
@@ -100,22 +115,56 @@ export interface Driver {
 }
 
 // Procurement Flows
-export type DocumentStatus = 'Draft' | 'Sent' | 'Under Negotiation' | 'Approved' | 'Rejected' | 'Cancelled' | 'Converted' | 'Completed' | 'Pending Approval';
+export type DocumentStatus = 'Draft' | 'Sent' | 'Under Negotiation' | 'Approved' | 'Rejected' | 'Cancelled' | 'Converted' | 'Completed' | 'Pending Approval' | 'Received' | 'Selected';
+
+export interface PurchaseEnquiryItem {
+  id?: string;
+  item: string;
+  description: string;
+  sku: string;
+  quantity: number;
+  unit: string;
+  estimatedRate: number;
+  estimatedAmount: number;
+  requiredDate: string;
+  remarks?: string;
+}
 
 export interface PurchaseEnquiry {
   id: string;
   enquiryNo: string;
   date: string;
-  partyType: 'supplier' | 'farmer';
-  partyId: string;
+  requiredByDate: string;
+  department: string;
+  requestedBy: string;
+  priority: 'Low' | 'Medium' | 'High' | 'Urgent';
+  warehouseId: string;
+  purpose?: string;
+  status: 'Draft' | 'Pending Approval' | 'Approved' | 'RFQ Created' | 'Closed' | 'Cancelled';
+  items: PurchaseEnquiryItem[];
+  // Backward compatibility:
   commodityId: string;
   quantity: number;
-  unit: 'MT' | 'Qtl' | 'Kg';
   expectedPrice: number;
   requiredDate: string;
-  warehouseId: string;
+  partyType?: 'supplier' | 'farmer';
+  partyId?: string;
   notes?: string;
-  status: DocumentStatus;
+}
+
+export interface PurchaseQuotationItem {
+  id?: string;
+  item: string;
+  description?: string;
+  sku: string;
+  quantity: number;
+  unit: string;
+  rate: number;
+  discount: number;
+  taxPercent: number;
+  taxAmount: number;
+  lineTotal: number;
+  deliveryDate: string;
 }
 
 export interface PurchaseQuotation {
@@ -125,6 +174,17 @@ export interface PurchaseQuotation {
   date: string;
   partyType: 'supplier' | 'farmer';
   partyId: string;
+  validUntil: string;
+  paymentTerms: string;
+  deliveryDays: number;
+  freight: number;
+  discount: number;
+  tax: number;
+  grandTotal: number;
+  remarks?: string;
+  status: DocumentStatus;
+  items: PurchaseQuotationItem[];
+  // Backward compatibility:
   commodityId: string;
   quantity: number;
   rate: number;
@@ -133,10 +193,7 @@ export interface PurchaseQuotation {
   otherCharges: number;
   gstPercent: number;
   total: number;
-  validUntil: string;
-  paymentTerms: string;
-  deliveryTerms: string;
-  status: DocumentStatus;
+  deliveryTerms?: string;
 }
 
 export interface ApprovalHistoryItem {
@@ -147,6 +204,20 @@ export interface ApprovalHistoryItem {
   comment?: string;
 }
 
+export interface PurchaseOrderItem {
+  id?: string;
+  item: string;
+  description: string;
+  quantity: number;
+  unit: string;
+  rate: number;
+  discount: number;
+  taxPercent: number;
+  taxAmount: number;
+  amount: number;
+  expectedDelivery: string;
+}
+
 export interface PurchaseOrder {
   id: string;
   poNo: string;
@@ -154,18 +225,52 @@ export interface PurchaseOrder {
   date: string;
   partyType: 'supplier' | 'farmer';
   partyId: string;
+  supplierContact?: string;
+  billingAddress?: string;
+  shippingAddress?: string;
+  expectedDelivery: string;
+  paymentTerms: string;
+  currency: string;
+  referenceQuotation?: string;
+  buyer: string;
+  department: string;
+  deliveryTerms?: string;
+  freight: number;
+  otherCharges: number;
+  discount: number;
+  tax: number;
+  total: number;
+  notes?: string;
+  attachment?: string;
+  status: 'Draft' | 'Pending Approval' | 'Approved' | 'Sent' | 'Partially Received' | 'Received' | 'Cancelled';
+  items: PurchaseOrderItem[];
+  approvalHistory: ApprovalHistoryItem[];
+  // Backward compatibility:
   commodityId: string;
   quantity: number;
   rate: number;
   transportCost: number;
-  otherCharges: number;
   gstPercent: number;
-  total: number;
-  expectedDelivery: string;
   warehouseId: string;
-  status: 'Draft' | 'Pending Approval' | 'Approved' | 'Partially Received' | 'Received' | 'Cancelled';
-  notes?: string;
-  approvalHistory: ApprovalHistoryItem[];
+}
+
+export interface GRNItem {
+  id?: string;
+  item: string;
+  orderedQty: number;
+  previouslyReceived: number;
+  receivedNow: number;
+  totalReceived: number;
+  pendingQuantity: number;
+  acceptedQuantity: number;
+  rejectedQuantity: number;
+  damagedQuantity: number;
+  unit: string;
+  batchNo: string;
+  serialNo?: string;
+  expiryDate?: string;
+  storageLocation?: string;
+  remarks?: string;
 }
 
 export interface GRN {
@@ -180,6 +285,16 @@ export interface GRN {
   driverName: string;
   arrivalDate: string;
   warehouseId: string;
+  challanNo: string;
+  challanDate: string;
+  transporter?: string;
+  remarks?: string;
+  attachment?: string;
+  qualityStatus: 'Pending' | 'Passed' | 'Rejected' | 'Partially Passed';
+  inwardStatus: 'Pending' | 'Completed';
+  status: 'Draft' | 'Pending QC' | 'Completed' | 'Cancelled' | 'Accepted' | 'Rejected';
+  items: GRNItem[];
+  // Backward compatibility:
   commodityId: string;
   orderedQty: number;
   receivedQty: number;
@@ -187,14 +302,32 @@ export interface GRN {
   rejectedQty: number;
   weight: number;
   batchNo: string;
-  qualityStatus: 'Pending' | 'Passed' | 'Rejected' | 'Partially Passed';
-  inwardStatus: 'Pending' | 'Completed';
+}
+
+export interface QualityInspectionItem {
+  item: string;
+  quantity: number;
+  moisturePercent: number;
+  grade: 'A' | 'B' | 'C' | 'Rejected';
+  color: string;
+  foreignMaterialPercent: number;
+  damagePercent: number;
+  purityPercent: number;
+  qualityScore: number;
+  status: 'Pending' | 'Passed' | 'Partially Passed' | 'Rejected';
+  remarks?: string;
 }
 
 export interface QualityInspection {
   id: string;
   grnId: string;
   grnNo: string;
+  inspector: string;
+  date: string;
+  status: 'Pending' | 'Passed' | 'Partially Passed' | 'Rejected';
+  notes?: string;
+  items: QualityInspectionItem[];
+  // Backward compatibility:
   commodityId: string;
   batchNo: string;
   quantity: number;
@@ -204,12 +337,62 @@ export interface QualityInspection {
   color: string;
   foreignMaterialPercent: number;
   damagePercent: number;
-  qualityScore: number; // 0 to 100
-  inspector: string;
-  date: string;
-  status: 'Pending' | 'Passed' | 'Partially Passed' | 'Rejected';
-  notes?: string;
+  qualityScore: number;
 }
+
+// Purchase Invoice types
+export interface PurchaseInvoiceItem {
+  id?: string;
+  item: string;
+  poQty: number;
+  receivedQty: number;
+  invoiceQty: number;
+  rate: number;
+  discount: number;
+  taxPercent: number;
+  taxAmount: number;
+  amount: number;
+}
+
+export interface PurchaseInvoice {
+  id: string;
+  invoiceNo: string;
+  invoiceDate: string;
+  supplierId: string; // References Supplier/Farmer id
+  partyType: 'supplier' | 'farmer';
+  poNumber: string;
+  grnNumber: string;
+  dueDate: string;
+  paymentTerms: string;
+  supplierGSTIN?: string;
+  billingAddress?: string;
+  shippingAddress?: string;
+  taxType: string;
+  subtotal: number;
+  discount: number;
+  cgst: number;
+  sgst: number;
+  igst: number;
+  freight: number;
+  otherCharges: number;
+  roundOff: number;
+  grandTotal: number;
+  status: 'Draft' | 'Pending Verification' | 'Matched' | 'Mismatch' | 'Approved' | 'Partially Paid' | 'Paid' | 'Disputed' | 'Cancelled';
+  items: PurchaseInvoiceItem[];
+  mismatchReason?: string;
+  remarks?: string;
+  amountPaid?: number;
+  remainingAmount?: number;
+  paymentHistory?: Array<{
+    date: string;
+    reference: string;
+    mode: string;
+    account: string;
+    amount: number;
+    notes?: string;
+  }>;
+}
+
 
 export interface StockItem {
   id: string;
